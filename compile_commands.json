@@ -1,7 +1,0 @@
-[
-{
-  "directory": "/home/fishhh/sync/projects2/bs/build",
-  "command": "/nix/store/l0fvy72hpfdpjjs3dk4112f57x7r3dlm-gcc-wrapper-12.2.0/bin/g++   -g -g -Wall -Wextra -g -pg -std=gnu++20 -o CMakeFiles/better-swallow.dir/src/main.cc.o -c /home/fishhh/sync/projects2/bs/src/main.cc",
-  "file": "/home/fishhh/sync/projects2/bs/src/main.cc"
-}
-]

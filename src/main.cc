@@ -1,22 +1,86 @@
 #include <X11/X.h>
-#include <X11/Xlib.h>
+#include <X11/Xutil.h>
 #include <X11/extensions/XRes.h>
 
 #include <barrier>
+#include <cassert>
 #include <cerrno>
 #include <chrono>
 #include <cstdlib>
 #include <ctime>
+#include <fstream>
 #include <iostream>
+#include <optional>
 #include <spawn.h>
+#include <string_view>
 #include <sys/wait.h>
 #include <system_error>
 #include <thread>
 #include <unistd.h>
+#include <unordered_map>
 #include <unordered_set>
 
+pid_t ppid(int pid) {
+  std::ifstream status("/proc/" + std::to_string(pid) + "/status");
+  std::string line;
+
+  while (std::getline(status, line)) {
+    if (line.starts_with("PPid:"))
+      return std::stoi(line.data() + 6);
+  }
+
+  throw std::runtime_error("could not get parent pid of " +
+                           std::to_string(pid));
+}
+
+// TODO: Can we assume there is only one pid per window? I think so
+std::optional<pid_t> window_to_pid(Display *display, Window window) {
+  XResClientIdSpec spec;
+  spec.client = window;
+  spec.mask = XRES_CLIENT_ID_XID;
+
+  long count;
+  XResClientIdValue *output;
+  XResQueryClientIds(display, 1, &spec, &count, &output);
+
+  std::optional<pid_t> pid;
+
+  for (auto i = 0; i < count; ++i)
+    if (output[i].spec.mask == XRES_CLIENT_ID_PID_MASK) {
+      pid = *(pid_t *)output[i].value;
+      break;
+    }
+
+  XResClientIdsDestroy(count, output);
+
+  return pid;
+}
+
+void collect_candidate_windows(Display *display, Window window,
+                     std::unordered_multimap<pid_t, Window> &out) {
+  if (auto pid = window_to_pid(display, window)) {
+    XTextProperty text;
+    XGetWMName(display, window, &text);
+    // Only grab windows with names to filter out garbage
+    // More heuristics could be implemented in the future
+    if (text.value)
+      out.emplace(*pid, window);
+  }
+
+  Window root, parent;
+  Window *children;
+  unsigned n;
+  XQueryTree(display, window, &root, &parent, &children, &n);
+
+  if (children != NULL) {
+    for (unsigned i = 0; i < n; i++)
+      collect_candidate_windows(display, children[i], out);
+    XFree(children);
+  }
+}
+
 int main(int argc, char **argv) {
-  char const *program_name = "bswallow";
+  char const *program_name = "better-swallow";
 
   if (argc >= 1)
     program_name = argv[0];
@@ -51,8 +115,40 @@ int main(int argc, char **argv) {
       }
     }
 
-    int rev;
-    XGetInputFocus(display, &swallower, &rev);
+    {
+      std::unordered_multimap<pid_t, Window> pid_to_window;
+      collect_candidate_windows(display, XDefaultRootWindow(display), pid_to_window);
+      bool found_reliable_parent = false;
+
+      pid_t parent = getppid();
+
+      while (true) {
+        auto [begin, end] = pid_to_window.equal_range(parent);
+
+        if (begin != end) {
+          // Don't risk grabbing the wrong window when there are mutiple
+          if (std::next(begin) != end)
+            break;
+
+          swallower = begin->second;
+          found_reliable_parent = true;
+          break;
+        } else {
+          parent = ppid(parent);
+          if (parent == 1)
+            break;
+        }
+      }
+
+      if (!found_reliable_parent) {
+        std::cerr << "Failed to find swallower through reliable method, "
+                     "falling back to input focus\n";
+
+        int rev;
+        XGetInputFocus(display, &swallower, &rev);
+      }
+    }
+
     XSelectInput(display, XDefaultRootWindow(display), SubstructureNotifyMask);
 
     XSync(display, true);
@@ -71,22 +167,7 @@ int main(int argc, char **argv) {
       XNextEvent(display, &event);
 
       if (event.type == MapNotify) {
-        XResClientIdSpec spec;
-        spec.client = event.xmap.window;
-        spec.mask = XRES_CLIENT_ID_XID;
-
-        long count;
-        XResClientIdValue *output;
-        XResQueryClientIds(display, 1, &spec, &count, &output);
-
-        bool found_child_pid = false;
-
-        for (auto i = 0; i < count; ++i)
-          if (output[i].spec.mask == XRES_CLIENT_ID_PID_MASK &&
-              *(pid_t *)output[i].value == child_pid)
-            found_child_pid = true;
-
-        if (found_child_pid) {
+        if (window_to_pid(display, event.xmap.window) == child_pid) {
           if (child_windows.empty())
             XUnmapWindow(display, swallower);
           child_windows.insert(event.xmap.window);
