@@ -57,7 +57,7 @@ std::optional<pid_t> window_to_pid(Display *display, Window window) {
 }
 
 void collect_candidate_windows(Display *display, Window window,
-                     std::unordered_multimap<pid_t, Window> &out) {
+                               std::unordered_multimap<pid_t, Window> &out) {
   if (auto pid = window_to_pid(display, window)) {
     XTextProperty text;
     XGetWMName(display, window, &text);
@@ -94,11 +94,7 @@ int main(int argc, char **argv) {
   std::unordered_set<Window> child_windows;
   Window swallower;
 
-  std::barrier sync(2, [&child_pid, argv] {
-    if (posix_spawnp(&child_pid, argv[1], nullptr, nullptr, argv + 1, environ))
-      throw std::system_error(std::error_code(errno, std::generic_category()),
-                              "posix_spawnp");
-  });
+  std::barrier sync(2);
 
   std::jthread worker([&](std::stop_token const &token) {
     auto *display = XOpenDisplay(0);
@@ -117,7 +113,8 @@ int main(int argc, char **argv) {
 
     {
       std::unordered_multimap<pid_t, Window> pid_to_window;
-      collect_candidate_windows(display, XDefaultRootWindow(display), pid_to_window);
+      collect_candidate_windows(display, XDefaultRootWindow(display),
+                                pid_to_window);
       bool found_reliable_parent = false;
 
       pid_t parent = getppid();
@@ -154,6 +151,7 @@ int main(int argc, char **argv) {
     XSync(display, true);
 
     sync.arrive_and_wait();
+    sync.arrive_and_wait();
 
     while (true) {
       if (token.stop_requested())
@@ -189,14 +187,22 @@ int main(int argc, char **argv) {
 
   sync.arrive_and_wait();
 
+  if (posix_spawnp(&child_pid, argv[1], nullptr, nullptr, argv + 1, environ)) {
+    perror("posix_spawnp failed");
+    exit(1);
+  }
+
+  sync.arrive_and_wait();
+
   int status;
   while (true) {
     auto ret = waitpid(child_pid, &status, 0);
     if (ret == child_pid)
       break;
-    if (ret != EINTR)
-      throw std::system_error(std::error_code(errno, std::generic_category()),
-                              "waitpid");
+    if (ret != EINTR) {
+      perror("waitpid failed");
+      exit(1);
+    }
   }
 
   worker.request_stop();
