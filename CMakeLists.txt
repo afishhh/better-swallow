@@ -7,9 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(X11 REQUIRED)
 
-add_executable(${PROJECT_NAME}
-	src/main.cc
-)
+add_executable(${PROJECT_NAME} main.cc)
 
 target_compile_options(${PROJECT_NAME} PRIVATE
   -Wall -Wextra
