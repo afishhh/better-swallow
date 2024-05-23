@@ -3,9 +3,10 @@ dwm-6.3 のみに存在: compile_commands.json
 dwm-6.3 のみに存在: config.h
 dwm-6.3 のみに存在: drw.o
 dwm-6.3 のみに存在: dwm
+dwm-6.3 のみに存在: dwm-6.3-better-swallow.diff
 diff -up dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
 --- dwm-6.3-orig/dwm.c	2024-05-23 21:33:22.872865929 +0200
-+++ dwm-6.3/dwm.c	2024-05-23 23:46:54.374954923 +0200
++++ dwm-6.3/dwm.c	2024-05-24 00:08:11.311234962 +0200
 @@ -49,7 +49,7 @@
  #define CLEANMASK(mask)         (mask & ~(numlockmask|LockMask) & (ShiftMask|ControlMask|Mod1Mask|Mod2Mask|Mod3Mask|Mod4Mask|Mod5Mask))
  #define INTERSECT(x,y,w,h,m)    (MAX(0, MIN((x)+(w),(m)->wx+(m)->ww) - MAX((x),(m)->wx)) \
@@ -33,23 +34,25 @@ diff -up dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
  static Atom wmatom[WMLast], netatom[NetLast];
  static int running = 1;
  static Cur *cursor[CurLast];
-@@ -400,6 +404,43 @@ arrangemon(Monitor *m)
+@@ -400,6 +404,45 @@ arrangemon(Monitor *m)
  		m->lt[m->sellt]->arrange(m);
  }
  
 +
 +void
 +copyclientpos(Client *dst, Client *src) {
-+	resizeclient(dst, src->x, src->y, src->w, src->h);
-+	dst->oldx = src->oldx;
-+	dst->oldy = src->oldy;
-+	dst->oldw = src->oldw;
-+	dst->oldh = src->oldh;
-+	dst->oldstate = src->oldstate;
-+	dst->isfloating = src->isfloating;
-+	dst->isfullscreen = src->isfullscreen;
-+	dst->tags = src->tags;
-+	dst->mon = src->mon;
++	dst->bw = src->bw;
++        resizeclient(dst, src->x, src->y, src->w, src->h);
++        dst->oldx = src->oldx;
++        dst->oldy = src->oldy;
++        dst->oldw = src->oldw;
++        dst->oldh = src->oldh;
++        dst->oldbw = src->oldbw;
++        dst->oldstate = src->oldstate;
++        dst->isfullscreen = src->isfullscreen;
++        dst->isfloating = src->isfloating;
++        dst->tags = src->tags;
++        dst->mon = src->mon;
 +}
 +
 +void
@@ -77,7 +80,7 @@ diff -up dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
  void
  attach(Client *c)
  {
-@@ -1052,6 +1093,7 @@ manage(Window w, XWindowAttributes *wa)
+@@ -1052,6 +1095,7 @@ manage(Window w, XWindowAttributes *wa)
  	c->y = MAX(c->y, ((c->mon->by == c->mon->my) && (c->x + (c->w / 2) >= c->mon->wx)
  		&& (c->x + (c->w / 2) < c->mon->wx + c->mon->ww)) ? bh : c->mon->my);
  	c->bw = borderpx;
@@ -85,7 +88,7 @@ diff -up dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
  
  	wc.border_width = c->bw;
  	XConfigureWindow(dpy, w, CWBorderWidth, &wc);
-@@ -1066,8 +1108,10 @@ manage(Window w, XWindowAttributes *wa)
+@@ -1066,8 +1110,10 @@ manage(Window w, XWindowAttributes *wa)
  		c->isfloating = c->oldstate = trans != None || c->isfixed;
  	if (c->isfloating)
  		XRaiseWindow(dpy, c->win);
@@ -98,7 +101,7 @@ diff -up dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
  	XChangeProperty(dpy, root, netatom[NetClientList], XA_WINDOW, 32, PropModeAppend,
  		(unsigned char *) &(c->win), 1);
  	XMoveResizeWindow(dpy, c->win, c->x + 2 * sw, c->y, c->w, c->h); /* some windows require this */
-@@ -1077,7 +1121,8 @@ manage(Window w, XWindowAttributes *wa)
+@@ -1077,7 +1123,8 @@ manage(Window w, XWindowAttributes *wa)
  	c->mon->sel = c;
  	arrange(c->mon);
  	XMapWindow(dpy, c->win);
@@ -108,7 +111,7 @@ diff -up dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
  }
  
  void
-@@ -1566,6 +1611,7 @@ setup(void)
+@@ -1566,6 +1613,7 @@ setup(void)
  	netatom[NetWMWindowType] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
  	netatom[NetWMWindowTypeDialog] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
  	netatom[NetClientList] = XInternAtom(dpy, "_NET_CLIENT_LIST", False);
@@ -116,7 +119,7 @@ diff -up dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
  	/* init cursors */
  	cursor[CurNormal] = drw_cur_create(drw, XC_left_ptr);
  	cursor[CurResize] = drw_cur_create(drw, XC_sizing);
-@@ -1583,6 +1629,8 @@ setup(void)
+@@ -1583,6 +1631,8 @@ setup(void)
  		PropModeReplace, (unsigned char *) &wmcheckwin, 1);
  	XChangeProperty(dpy, wmcheckwin, netatom[NetWMName], utf8string, 8,
  		PropModeReplace, (unsigned char *) "dwm", 3);
@@ -125,7 +128,7 @@ diff -up dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
  	XChangeProperty(dpy, root, netatom[NetWMCheck], XA_WINDOW, 32,
  		PropModeReplace, (unsigned char *) &wmcheckwin, 1);
  	/* EWMH support per view */
-@@ -1771,9 +1819,21 @@ unmanage(Client *c, int destroyed)
+@@ -1771,9 +1821,21 @@ unmanage(Client *c, int destroyed)
  	Monitor *m = c->mon;
  	XWindowChanges wc;
  
@@ -148,7 +151,7 @@ diff -up dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
  		wc.border_width = c->oldbw;
  		XGrabServer(dpy); /* avoid race conditions */
  		XSetErrorHandler(xerrordummy);
-@@ -1784,8 +1844,9 @@ unmanage(Client *c, int destroyed)
+@@ -1784,8 +1846,9 @@ unmanage(Client *c, int destroyed)
  		XSetErrorHandler(xerror);
  		XUngrabServer(dpy);
  	}
