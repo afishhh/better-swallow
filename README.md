@@ -1,6 +1,7 @@
 ## A better swallow
 
 A simple program that implements devour-like swallowing except it's actually smart.
+Also comes with a dwm patch that enchances the swallowing experience even more.
 
 ### Building
 
@@ -31,3 +32,13 @@ bs glxgears
 
 This method of finding the swallower is, in my opinion, significantly better than just grabbing the currently focused window like devour does.
 It means that you can run `sleep 2; better-swallow glxgears` and have `glxgears` still swallow the terminal instead of whatever other window you moved your mouse over by the time the sleep completed.
+
+### DWM patch
+
+If you use the patch alongside this program you gain these additional features:
+1. The first swallowed client will have its window positioned exactly where the swallower once was.
+2. Once all swallowed clients have been closed the swallower will be put exactly where the last swallowed client was.
+
+> [!WARNING]
+> This patch in its current state will crash dwm if a swallower's window is unmapped before all the swallowed windows.
+> I will hopefully fix this issue in the near future.
