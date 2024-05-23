@@ -29,4 +29,8 @@ stdenv.mkDerivation {
   cmakeFlags = [
     ''-DCMAKE_INSTALL_PREFIX=''${out}''
   ];
+
+  passthru = {
+    dwm-patch = ./dwm-6.3-better-swallow.diff;
+  };
 }

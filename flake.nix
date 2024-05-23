@@ -9,8 +9,7 @@
       (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-        in
-        with pkgs.lib; {
+        in {
           defaultPackage = self.packages.${system}.better-swallow;
           packages.better-swallow = pkgs.callPackage ./default.nix { };
           devShell = self.defaultPackage.${system};

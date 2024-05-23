@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <fstream>
 #include <iostream>
@@ -111,6 +112,13 @@ int main(int argc, char **argv) {
       }
     }
 
+    Atom swallow_atom = XInternAtom(display, "_BETTER_SWALLOW", False);
+
+    XTextProperty prop;
+    XGetTextProperty(display, XDefaultRootWindow(display), &prop, swallow_atom);
+    bool has_patch =
+        prop.value && !std::strcmp((char *)prop.value, "supported");
+
     {
       std::unordered_multimap<pid_t, Window> pid_to_window;
       collect_candidate_windows(display, XDefaultRootWindow(display),
@@ -164,22 +172,37 @@ int main(int argc, char **argv) {
       XEvent event;
       XNextEvent(display, &event);
 
-      if (event.type == MapNotify) {
+      if (event.type == CreateNotify) {
+        if (has_patch &&
+            window_to_pid(display, event.xcreatewindow.window) == child_pid) {
+          std::string value;
+          value += "swallower=";
+          value += std::to_string(swallower);
+
+          XTextProperty property;
+          property.encoding = XInternAtom(display, "STRING", false);
+          property.nitems = value.size();
+          property.format = 8;
+          property.value = (unsigned char *)value.data();
+          XSetTextProperty(display, event.xcreatewindow.window, &property,
+                           swallow_atom);
+        }
+      } else if (event.type == MapNotify) {
         if (window_to_pid(display, event.xmap.window) == child_pid) {
-          if (child_windows.empty())
+          if (child_windows.empty() && !has_patch)
             XUnmapWindow(display, swallower);
           child_windows.insert(event.xmap.window);
         }
       } else if (event.type == UnmapNotify) {
         if (child_windows.erase(event.xmap.window))
-          if (child_windows.empty())
+          if (child_windows.empty() && !has_patch)
             XMapWindow(display, swallower);
       }
 
       XFreeEventData(display, &event.xcookie);
     }
 
-    if (!child_windows.empty())
+    if (!child_windows.empty() && !has_patch)
       XMapWindow(display, swallower);
 
     XCloseDisplay(display);
