@@ -1,9 +1,6 @@
-dwm-6.3 のみに存在: better-swallow-6.3.diff
-dwm-6.3 のみに存在: compile_commands.json
-dwm-6.3 のみに存在: config.h
-diff -up dwm-6.3-orig/config.mk dwm-6.3/config.mk
---- dwm-6.3-orig/config.mk	2024-05-23 21:33:22.869865916 +0200
-+++ dwm-6.3/config.mk	2024-06-25 01:21:57.800753205 +0200
+diff -up -x dwm -x '*.o' -x compile_commands.json dwm-6.3-orig/config.mk dwm-6.3/config.mk
+--- dwm-6.3-orig/config.mk	2024-06-25 01:55:26.769203813 +0200
++++ dwm-6.3/config.mk	2024-06-25 01:55:26.773203836 +0200
 @@ -24,6 +24,8 @@ FREETYPEINC = /usr/include/freetype2
  INCS = -I${X11INC} -I${FREETYPEINC}
  LIBS = -L${X11LIB} -lX11 ${XINERAMALIBS} ${FREETYPELIBS}
@@ -13,12 +10,9 @@ diff -up dwm-6.3-orig/config.mk dwm-6.3/config.mk
  # flags
  CPPFLAGS = -D_DEFAULT_SOURCE -D_BSD_SOURCE -D_POSIX_C_SOURCE=200809L -DVERSION=\"${VERSION}\" ${XINERAMAFLAGS}
  #CFLAGS   = -g -std=c99 -pedantic -Wall -O0 ${INCS} ${CPPFLAGS}
-dwm-6.3 のみに存在: drw.o
-dwm-6.3 のみに存在: dwm
-dwm-6.3 のみに存在: dwm-6.3-better-swallow.diff
-diff -up dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
---- dwm-6.3-orig/dwm.c	2024-05-23 21:33:22.872865929 +0200
-+++ dwm-6.3/dwm.c	2024-06-25 01:37:20.457314844 +0200
+diff -up -x dwm -x '*.o' -x compile_commands.json dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
+--- dwm-6.3-orig/dwm.c	2024-06-25 01:55:26.771203825 +0200
++++ dwm-6.3/dwm.c	2024-06-25 01:55:26.774203842 +0200
 @@ -40,6 +40,7 @@
  #include <X11/extensions/Xinerama.h>
  #endif /* XINERAMA */
@@ -255,5 +249,3 @@ diff -up dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
  	updateclientlist();
  	arrange(m);
  }
-dwm-6.3 のみに存在: dwm.o
-dwm-6.3 のみに存在: util.o

@@ -1,3 +1,5 @@
 build/
 result
 compile_commands.json
+/dwm-6.3
+/dwm-6.3-orig
