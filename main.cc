@@ -161,6 +161,19 @@ int main(int argc, char **argv) {
     sync.arrive_and_wait();
     sync.arrive_and_wait();
 
+    if (has_patch) {
+      XEvent event;
+      event.xclient.type = ClientMessage;
+      event.xclient.message_type = swallow_atom;
+      event.xclient.format = 32;
+      event.xclient.window = swallower;
+      event.xclient.data.l[0] = child_pid;
+      XSendEvent(display, XDefaultRootWindow(display), False,
+                 SubstructureRedirectMask | SubstructureNotifyMask, &event);
+      XSync(display, true);
+      return; // From here on, dwm will manage the swallowing itself
+    }
+
     while (true) {
       if (token.stop_requested())
         break;
@@ -172,37 +185,22 @@ int main(int argc, char **argv) {
       XEvent event;
       XNextEvent(display, &event);
 
-      if (event.type == CreateNotify) {
-        if (has_patch &&
-            window_to_pid(display, event.xcreatewindow.window) == child_pid) {
-          std::string value;
-          value += "swallower=";
-          value += std::to_string(swallower);
-
-          XTextProperty property;
-          property.encoding = XInternAtom(display, "STRING", false);
-          property.nitems = value.size();
-          property.format = 8;
-          property.value = (unsigned char *)value.data();
-          XSetTextProperty(display, event.xcreatewindow.window, &property,
-                           swallow_atom);
-        }
-      } else if (event.type == MapNotify) {
+      if (event.type == MapNotify) {
         if (window_to_pid(display, event.xmap.window) == child_pid) {
-          if (child_windows.empty() && !has_patch)
+          if (child_windows.empty())
             XUnmapWindow(display, swallower);
           child_windows.insert(event.xmap.window);
         }
       } else if (event.type == UnmapNotify) {
         if (child_windows.erase(event.xmap.window))
-          if (child_windows.empty() && !has_patch)
+          if (child_windows.empty())
             XMapWindow(display, swallower);
       }
 
       XFreeEventData(display, &event.xcookie);
     }
 
-    if (!child_windows.empty() && !has_patch)
+    if (!child_windows.empty())
       XMapWindow(display, swallower);
 
     XCloseDisplay(display);

@@ -1,13 +1,33 @@
 dwm-6.3 のみに存在: better-swallow-6.3.diff
 dwm-6.3 のみに存在: compile_commands.json
 dwm-6.3 のみに存在: config.h
+diff -up dwm-6.3-orig/config.mk dwm-6.3/config.mk
+--- dwm-6.3-orig/config.mk	2024-05-23 21:33:22.869865916 +0200
++++ dwm-6.3/config.mk	2024-06-25 01:21:57.800753205 +0200
+@@ -24,6 +24,8 @@ FREETYPEINC = /usr/include/freetype2
+ INCS = -I${X11INC} -I${FREETYPEINC}
+ LIBS = -L${X11LIB} -lX11 ${XINERAMALIBS} ${FREETYPELIBS}
+ 
++LIBS += -lXRes
++
+ # flags
+ CPPFLAGS = -D_DEFAULT_SOURCE -D_BSD_SOURCE -D_POSIX_C_SOURCE=200809L -DVERSION=\"${VERSION}\" ${XINERAMAFLAGS}
+ #CFLAGS   = -g -std=c99 -pedantic -Wall -O0 ${INCS} ${CPPFLAGS}
 dwm-6.3 のみに存在: drw.o
 dwm-6.3 のみに存在: dwm
 dwm-6.3 のみに存在: dwm-6.3-better-swallow.diff
 diff -up dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
 --- dwm-6.3-orig/dwm.c	2024-05-23 21:33:22.872865929 +0200
-+++ dwm-6.3/dwm.c	2024-05-24 00:08:11.311234962 +0200
-@@ -49,7 +49,7 @@
++++ dwm-6.3/dwm.c	2024-06-25 01:37:20.457314844 +0200
+@@ -40,6 +40,7 @@
+ #include <X11/extensions/Xinerama.h>
+ #endif /* XINERAMA */
+ #include <X11/Xft/Xft.h>
++#include <X11/extensions/XRes.h>
+ 
+ #include "drw.h"
+ #include "util.h"
+@@ -49,7 +50,7 @@
  #define CLEANMASK(mask)         (mask & ~(numlockmask|LockMask) & (ShiftMask|ControlMask|Mod1Mask|Mod2Mask|Mod3Mask|Mod4Mask|Mod5Mask))
  #define INTERSECT(x,y,w,h,m)    (MAX(0, MIN((x)+(w),(m)->wx+(m)->ww) - MAX((x),(m)->wx)) \
                                 * MAX(0, MIN((y)+(h),(m)->wy+(m)->wh) - MAX((y),(m)->wy)))
@@ -16,28 +36,66 @@ diff -up dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
  #define LENGTH(X)               (sizeof X / sizeof X[0])
  #define MOUSEMASK               (BUTTONMASK|PointerMotionMask)
  #define WIDTH(X)                ((X)->w + 2 * (X)->bw)
-@@ -93,6 +93,9 @@ struct Client {
+@@ -93,6 +94,11 @@ struct Client {
  	int bw, oldbw;
  	unsigned int tags;
  	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen;
++
 +	// FIXME: Beware of crashes if the swallower is destroyed before the swallowed
 +	Client *swallower;
 +	int nswallowed;
++
  	Client *next;
  	Client *snext;
  	Monitor *mon;
-@@ -260,6 +263,7 @@ static void (*handler[LASTEvent]) (XEven
+@@ -141,6 +147,12 @@ typedef struct {
+ 	int monitor;
+ } Rule;
+ 
++typedef struct SwallowDef {
++	pid_t pid;
++	Client *swallower;
++	struct SwallowDef *next;
++} SwallowDef;
++
+ /* function declarations */
+ static void applyrules(Client *c);
+ static int applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact);
+@@ -260,6 +272,8 @@ static void (*handler[LASTEvent]) (XEven
  	[PropertyNotify] = propertynotify,
  	[UnmapNotify] = unmapnotify
  };
 +static Atom swallow_atom;
++static SwallowDef *swallowlist;
  static Atom wmatom[WMLast], netatom[NetLast];
  static int running = 1;
  static Cur *cursor[CurLast];
-@@ -400,6 +404,45 @@ arrangemon(Monitor *m)
+@@ -400,6 +414,67 @@ arrangemon(Monitor *m)
  		m->lt[m->sellt]->arrange(m);
  }
  
++pid_t
++wintopid(Window window) {
++  XResClientIdSpec spec;
++  spec.client = window;
++  spec.mask = XRES_CLIENT_ID_XID;
++
++  long count;
++  XResClientIdValue *output;
++  XResQueryClientIds(dpy, 1, &spec, &count, &output);
++
++  pid_t pid = -1;
++
++  for (auto i = 0; i < count; ++i)
++    if (output[i].spec.mask == XRES_CLIENT_ID_PID_MASK) {
++      pid = *(pid_t *)output[i].value;
++      break;
++    }
++
++  XResClientIdsDestroy(count, output);
++
++  return pid;
++}
 +
 +void
 +copyclientpos(Client *dst, Client *src) {
@@ -57,30 +115,46 @@ diff -up dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
 +
 +void
 +checkswallowed(Client *c) {
-+	XTextProperty prop;
-+	Window swallower;
++	pid_t pid = wintopid(c->win);
 +
-+	XGetTextProperty(dpy, c->win, &prop, swallow_atom);
++	if(pid < 0) return;
++	for(SwallowDef *sd = swallowlist; sd != NULL; sd = sd->next) {
++		if(pid == sd->pid) {
++			c->swallower = sd->swallower;
++			if(sd) copyclientpos(c, sd->swallower);
++			++c->swallower->nswallowed;
++			Client *tmp = c->swallower->next;
++			c->swallower->next = c;
++			c->next = tmp;
 +
-+	if(prop.value && sscanf((char*)prop.value, "swallower=%lu", &swallower) == 1) {
-+		Client *sw = wintoclient(swallower);
-+		c->swallower = sw;
-+		if(sw) copyclientpos(c, sw);
-+		++c->swallower->nswallowed;
-+		Client *tmp = c->swallower->next;
-+		c->swallower->next = c;
-+		c->next = tmp;
-+
-+		tmp = c->swallower->snext;
-+		c->swallower->snext = c;
-+		c->snext = tmp;
++			tmp = c->swallower->snext;
++			c->swallower->snext = c;
++			c->snext = tmp;
++			return;
++		}
 +	}
 +}
 +
  void
  attach(Client *c)
  {
-@@ -1052,6 +1095,7 @@ manage(Window w, XWindowAttributes *wa)
+@@ -526,7 +601,15 @@ clientmessage(XEvent *e)
+ 	} else if (cme->message_type == netatom[NetActiveWindow]) {
+ 		if (c != selmon->sel && !c->isurgent)
+ 			seturgent(c, 1);
++	} else if(cme->message_type == swallow_atom) {
++		SwallowDef *node = ecalloc(1, sizeof(SwallowDef));
++		node->pid = cme->data.l[0];
++		node->swallower = c;
++		node->next = swallowlist;
++		swallowlist = node;
++		return;
+ 	}
++
+ }
+ 
+ void
+@@ -1052,6 +1135,7 @@ manage(Window w, XWindowAttributes *wa)
  	c->y = MAX(c->y, ((c->mon->by == c->mon->my) && (c->x + (c->w / 2) >= c->mon->wx)
  		&& (c->x + (c->w / 2) < c->mon->wx + c->mon->ww)) ? bh : c->mon->my);
  	c->bw = borderpx;
@@ -88,7 +162,7 @@ diff -up dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
  
  	wc.border_width = c->bw;
  	XConfigureWindow(dpy, w, CWBorderWidth, &wc);
-@@ -1066,8 +1110,10 @@ manage(Window w, XWindowAttributes *wa)
+@@ -1066,8 +1150,10 @@ manage(Window w, XWindowAttributes *wa)
  		c->isfloating = c->oldstate = trans != None || c->isfixed;
  	if (c->isfloating)
  		XRaiseWindow(dpy, c->win);
@@ -101,7 +175,7 @@ diff -up dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
  	XChangeProperty(dpy, root, netatom[NetClientList], XA_WINDOW, 32, PropModeAppend,
  		(unsigned char *) &(c->win), 1);
  	XMoveResizeWindow(dpy, c->win, c->x + 2 * sw, c->y, c->w, c->h); /* some windows require this */
-@@ -1077,7 +1123,8 @@ manage(Window w, XWindowAttributes *wa)
+@@ -1077,7 +1163,8 @@ manage(Window w, XWindowAttributes *wa)
  	c->mon->sel = c;
  	arrange(c->mon);
  	XMapWindow(dpy, c->win);
@@ -111,7 +185,7 @@ diff -up dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
  }
  
  void
-@@ -1566,6 +1613,7 @@ setup(void)
+@@ -1566,6 +1653,7 @@ setup(void)
  	netatom[NetWMWindowType] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
  	netatom[NetWMWindowTypeDialog] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
  	netatom[NetClientList] = XInternAtom(dpy, "_NET_CLIENT_LIST", False);
@@ -119,7 +193,7 @@ diff -up dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
  	/* init cursors */
  	cursor[CurNormal] = drw_cur_create(drw, XC_left_ptr);
  	cursor[CurResize] = drw_cur_create(drw, XC_sizing);
-@@ -1583,6 +1631,8 @@ setup(void)
+@@ -1583,6 +1671,8 @@ setup(void)
  		PropModeReplace, (unsigned char *) &wmcheckwin, 1);
  	XChangeProperty(dpy, wmcheckwin, netatom[NetWMName], utf8string, 8,
  		PropModeReplace, (unsigned char *) "dwm", 3);
@@ -128,7 +202,28 @@ diff -up dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
  	XChangeProperty(dpy, root, netatom[NetWMCheck], XA_WINDOW, 32,
  		PropModeReplace, (unsigned char *) &wmcheckwin, 1);
  	/* EWMH support per view */
-@@ -1771,9 +1821,21 @@ unmanage(Client *c, int destroyed)
+@@ -1766,11 +1856,39 @@ unfocus(Client *c, int setfocus)
+ }
+ 
+ void
++deleteswallower(Client *c) {
++	SwallowDef **prevnext = &swallowlist;
++	for(SwallowDef *sd = swallowlist; sd != NULL;) {
++		if(sd->swallower == c) {
++			SwallowDef *next = sd->next;
++			*prevnext = next;
++			free(sd);
++			sd = next;
++		} else {
++			prevnext = &sd->next;
++			sd = sd->next;
++		}
++	}
++}
++
++void
+ unmanage(Client *c, int destroyed)
+ {
  	Monitor *m = c->mon;
  	XWindowChanges wc;
  
@@ -146,15 +241,13 @@ diff -up dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
 +
  	detach(c);
  	detachstack(c);
--	if (!destroyed) {
-+	if (destroyed) {
- 		wc.border_width = c->oldbw;
- 		XGrabServer(dpy); /* avoid race conditions */
- 		XSetErrorHandler(xerrordummy);
-@@ -1784,8 +1846,9 @@ unmanage(Client *c, int destroyed)
+ 	if (!destroyed) {
+@@ -1783,9 +1901,10 @@ unmanage(Client *c, int destroyed)
+ 		XSync(dpy, False);
  		XSetErrorHandler(xerror);
  		XUngrabServer(dpy);
- 	}
+-	}
++	} else deleteswallower(c);
 +	if(c->swallower) focus(c->swallower);
 +	else focus(NULL);
  	free(c);
