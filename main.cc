@@ -34,7 +34,6 @@ pid_t ppid(int pid) {
                            std::to_string(pid));
 }
 
-// TODO: Can we assume there is only one pid per window? I think so
 std::optional<pid_t> window_to_pid(Display *display, Window window) {
   XResClientIdSpec spec;
   spec.client = window;
