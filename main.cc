@@ -161,6 +161,10 @@ int main(int argc, char **argv) {
     sync.arrive_and_wait();
     sync.arrive_and_wait();
 
+    // FIXME: Theoretically we may get here after the child has already created a window.
+    //        However, this is basically never going to happen.
+    //        A fix for this would be to ditch posix_spawn and register the swallowed pid
+    //        before exec'ing the child but after creating the process.
     if (has_patch) {
       XEvent event;
       event.xclient.type = ClientMessage;
