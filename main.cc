@@ -7,12 +7,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <fcntl.h>
 #include <fstream>
 #include <iostream>
 #include <optional>
 #include <poll.h>
 #include <pthread.h>
 #include <spawn.h>
+#include <stdexcept>
 #include <sys/mman.h>
 #include <sys/poll.h>
 #include <sys/wait.h>
@@ -22,6 +24,8 @@
 #include <unordered_set>
 
 Display *dpy;
+// Used to signal to the worker thread that it should shut down.
+int stop_pipe[2];
 
 pid_t ppid(int pid) {
   std::ifstream status("/proc/" + std::to_string(pid) + "/status");
@@ -128,8 +132,12 @@ int main(int argc, char **argv) {
   }
 
   shared_memory &sh = *shared_memory::create();
+  if (pipe2(stop_pipe, O_CLOEXEC | O_NONBLOCK) < 0) {
+    perror("pipe2 failed");
+    exit(1);
+  }
 
-  std::jthread worker([&sh](std::stop_token const &token) {
+  std::thread worker([&sh]() {
     {
       int major_opcode;
       int first_event;
@@ -146,8 +154,7 @@ int main(int argc, char **argv) {
 
     XTextProperty prop;
     XGetTextProperty(dpy, XDefaultRootWindow(dpy), &prop, swallow_atom);
-    bool has_patch =
-        prop.value && !std::strcmp((char *)prop.value, "supported");
+    bool has_patch = prop.value && !strcmp((char *)prop.value, "supported");
 
     Window swallower;
     {
@@ -204,19 +211,22 @@ int main(int argc, char **argv) {
     } else
       sh.arrive_and_wait();
 
-    pollfd fds[1];
+    pollfd fds[2];
     fds[0] = {.fd = ConnectionNumber(dpy), .events = POLLIN, .revents = 0};
+    fds[1] = {.fd = stop_pipe[0], .events = 0, .revents = 0};
 
     std::unordered_set<Window> child_windows;
     while (true) {
-      if (token.stop_requested())
-        break;
-      else if (XEventsQueued(dpy, QueuedAfterFlush) == 0) {
-        int n = poll(fds, 1, 5);
+      if (XEventsQueued(dpy, QueuedAfterFlush) == 0) {
+        int n = poll(fds, 2, -1);
         if (n < 0 && errno != EINTR) {
           perror("poll failed");
           exit(1);
         }
+
+        if (fds[1].revents & POLLHUP)
+          break;
+
         continue;
       }
 
@@ -269,7 +279,16 @@ int main(int argc, char **argv) {
     }
   }
 
-  worker.request_stop();
+  if (close(stop_pipe[1]) < 0) {
+    perror("close failed");
+    exit(1);
+  }
+
+  try {
+    worker.join();
+  } catch (std::invalid_argument const &) {
+    // Thread is not joinable (already finished execution)
+  }
 
   if (WIFEXITED(status))
     return WEXITSTATUS(status);
