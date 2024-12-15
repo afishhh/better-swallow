@@ -38,7 +38,3 @@ It means that you can run `sleep 2; better-swallow glxgears` and have `glxgears`
 If you use the patch alongside this program you gain these additional features:
 1. The first swallowed client will have its window positioned exactly where the swallower once was.
 2. Once all swallowed clients have been closed the swallower will be put exactly where the last swallowed client was.
-
-> [!WARNING]
-> This patch in its current state will crash dwm if a swallower's window is unmapped before all the swallowed windows.
-> I will hopefully fix this issue in the near future.
