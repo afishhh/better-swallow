@@ -2,7 +2,6 @@
 #include <X11/Xutil.h>
 #include <X11/extensions/XRes.h>
 
-#include <barrier>
 #include <cassert>
 #include <cerrno>
 #include <chrono>
@@ -12,6 +11,7 @@
 #include <fstream>
 #include <iostream>
 #include <optional>
+#include <pthread.h>
 #include <spawn.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
@@ -19,16 +19,6 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <unordered_set>
-
-#ifndef USE_VFORK
-#  ifdef __linux__
-#    define USE_VFORK
-#  endif
-#else
-#  if !defined(__linux__)
-#    error You are compiling on a system that is not Linux but explicitly enabled USE_VFORK, make sure your system shares virtual memory with child processes in vfork or this program will not work!
-#  endif
-#endif
 
 Display *dpy;
 
@@ -90,6 +80,34 @@ void collect_candidate_windows(Window window,
   }
 }
 
+// Memory shared with the child process after fork.
+struct shared_memory {
+  pid_t child_pid{};
+  pthread_barrier_t sync;
+
+  shared_memory() {
+    pthread_barrierattr_t attr;
+    pthread_barrierattr_init(&attr);
+    pthread_barrierattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
+    pthread_barrier_init(&sync, &attr, 2);
+  }
+  shared_memory(shared_memory const &) = delete;
+  shared_memory(shared_memory &&) = delete;
+
+  void arrive_and_wait() { pthread_barrier_wait(&sync); }
+
+  static shared_memory *create() {
+    void *memory = mmap(nullptr, sizeof(shared_memory), PROT_READ | PROT_WRITE,
+                        MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+    if (memory == MAP_FAILED) {
+      perror("mmap failed");
+      exit(1);
+    }
+
+    return new (memory) shared_memory;
+  }
+};
+
 int main(int argc, char **argv) {
   char const *program_name = "better-swallow";
 
@@ -108,10 +126,9 @@ int main(int argc, char **argv) {
     exit(1);
   }
 
-  pid_t child_pid;
-  std::barrier sync(2);
+  shared_memory &sh = *shared_memory::create();
 
-  std::jthread worker([&child_pid, &sync](std::stop_token const &token) {
+  std::jthread worker([&sh](std::stop_token const &token) {
     {
       int major_opcode;
       int first_event;
@@ -169,7 +186,7 @@ int main(int argc, char **argv) {
     XSelectInput(dpy, XDefaultRootWindow(dpy), SubstructureNotifyMask);
     XSync(dpy, true);
 
-    sync.arrive_and_wait();
+    sh.arrive_and_wait();
 
     if (has_patch) {
       XEvent event;
@@ -177,14 +194,14 @@ int main(int argc, char **argv) {
       event.xclient.message_type = swallow_atom;
       event.xclient.format = 32;
       event.xclient.window = swallower;
-      event.xclient.data.l[0] = child_pid;
+      event.xclient.data.l[0] = sh.child_pid;
       XSendEvent(dpy, XDefaultRootWindow(dpy), False,
                  SubstructureRedirectMask | SubstructureNotifyMask, &event);
       XSync(dpy, true);
-      sync.arrive_and_wait();
+      sh.arrive_and_wait();
       return; // From here on, dwm will manage the swallowing itself
     } else
-      sync.arrive_and_wait();
+      sh.arrive_and_wait();
 
     std::unordered_set<Window> child_windows;
     while (true) {
@@ -199,7 +216,7 @@ int main(int argc, char **argv) {
       XNextEvent(dpy, &event);
 
       if (event.type == MapNotify) {
-        if (window_to_pid(event.xmap.window) == child_pid) {
+        if (window_to_pid(event.xmap.window) == sh.child_pid) {
           if (child_windows.empty())
             XUnmapWindow(dpy, swallower);
           child_windows.insert(event.xmap.window);
@@ -219,55 +236,24 @@ int main(int argc, char **argv) {
     XCloseDisplay(dpy);
   });
 
-  // NOTE: Why is this here?
-  //       Theoretically, there is a practically impossible race condition in
-  //       the no-vfork implementation where the child process creates a window
-  //       before we register our swallow in dwm. With the below vfork
-  //       implementation, the swallow definition is registered before the child
-  //       process is executed so this becomes impossible. (unless the X server
-  //       does something funny with the event order, which I don't think is
-  //       ever a problem)
-#ifdef USE_VFORK
-  // For good measure. (don't want to have child_pid be put in a register)
-  __asm__("" ::: "memory");
-  int ret = vfork();
-  if (ret < 0) {
+  pid_t forkret = fork();
+  if (forkret < 0) {
     perror("vfork failed");
     exit(1);
-  } else if (ret == 0) {
-    // NOTE: This and the sync calls are undefined behaviour :)
-    //       POSIX decided that vfork will result in "undefined behaviour"
-    //       whenever the program modifies anything else
-    //       than a pid_t variable for the result of the fork.
-    //       This means that this code is Linux specific.
-    //       The same behaviour can be implemented using fork() and shared
-    //       memory but that complicates the implementation for no added
-    //       benefit.
-    child_pid = getpid();
+  } else if (forkret == 0) {
     close(ConnectionNumber(dpy));
-    sync.arrive_and_wait();
-    sync.arrive_and_wait();
+    sh.child_pid = getpid();
+    sh.arrive_and_wait();
+    sh.arrive_and_wait();
     execvp(argv[1], argv + 1);
     perror("execvp failed");
     exit(255);
   }
-#else
-  posix_spawn_file_actions_t fa;
-  posix_spawn_file_actions_init(&fa);
-  posix_spawn_file_actions_addclose(&fa, ConnectionNumber(dpy));
-  if (posix_spawnp(&child_pid, argv[1], &fa, nullptr, argv + 1, environ)) {
-    perror("posix_spawnp failed");
-    exit(1);
-  }
-  sync.arrive_and_wait();
-  sync.arrive_and_wait();
-  posix_spawn_file_actions_destroy(&fa);
-#endif
 
   int status;
   while (true) {
-    auto ret = waitpid(child_pid, &status, 0);
-    if (ret == child_pid)
+    auto ret = waitpid(forkret, &status, 0);
+    if (ret == sh.child_pid)
       break;
     if (ret != EINTR) {
       perror("waitpid failed");
