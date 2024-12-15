@@ -104,6 +104,11 @@ int main(int argc, char **argv) {
   }
 
   dpy = XOpenDisplay(NULL);
+  if (!dpy)
+    if (execvp(argv[1], argv + 1) < 0) {
+      perror("execvp failed");
+      exit(1);
+    }
 
   pid_t child_pid;
   std::barrier sync(2);
