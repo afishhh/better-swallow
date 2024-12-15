@@ -28,7 +28,7 @@ bs glxgears
     - If that fails, get the currently focused window like devour. (fallback)
 2. Run the program provided on the command-line.
 3. If the child creates a window, unmap the swallower.
-4. If the child unmaps all it's windows or exits, map back the swallower.
+4. If the child unmaps all its windows or exits, map back the swallower.
 
 This method of finding the swallower is, in my opinion, significantly better than just grabbing the currently focused window like devour does.
 It means that you can run `sleep 2; better-swallow glxgears` and have `glxgears` still swallow the terminal instead of whatever other window you moved your mouse over by the time the sleep completed.
