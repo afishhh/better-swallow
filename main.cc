@@ -13,10 +13,8 @@
 #include <iostream>
 #include <optional>
 #include <spawn.h>
-#include <string_view>
 #include <sys/mman.h>
 #include <sys/wait.h>
-#include <system_error>
 #include <thread>
 #include <unistd.h>
 #include <unordered_map>
@@ -104,11 +102,11 @@ int main(int argc, char **argv) {
   }
 
   dpy = XOpenDisplay(NULL);
-  if (!dpy)
-    if (execvp(argv[1], argv + 1) < 0) {
-      perror("execvp failed");
-      exit(1);
-    }
+  if (!dpy) {
+    execvp(argv[1], argv + 1);
+    perror("execvp failed");
+    exit(1);
+  }
 
   pid_t child_pid;
   std::barrier sync(2);
@@ -224,7 +222,7 @@ int main(int argc, char **argv) {
   // NOTE: Why is this here?
   //       Theoretically, there is a practically impossible race condition in
   //       the no-vfork implementation where the child process creates a window
-  //       before we register out swallow in dwm. With the below vfork
+  //       before we register our swallow in dwm. With the below vfork
   //       implementation, the swallow definition is registered before the child
   //       process is executed so this becomes impossible. (unless the X server
   //       does something funny with the event order, which I don't think is
@@ -234,14 +232,14 @@ int main(int argc, char **argv) {
   __asm__("" ::: "memory");
   int ret = vfork();
   if (ret < 0) {
-    perror("vfork");
+    perror("vfork failed");
     exit(1);
   } else if (ret == 0) {
     // NOTE: This and the sync calls are undefined behaviour :)
     //       POSIX decided that vfork will result in "undefined behaviour"
     //       whenever the program modifies anything else
     //       than a pid_t variable for the result of the fork.
-    //       This means that this code is linux specific.
+    //       This means that this code is Linux specific.
     //       The same behaviour can be implemented using fork() and shared
     //       memory but that complicates the implementation for no added
     //       benefit.
@@ -250,7 +248,7 @@ int main(int argc, char **argv) {
     sync.arrive_and_wait();
     sync.arrive_and_wait();
     execvp(argv[1], argv + 1);
-    perror("execvp");
+    perror("execvp failed");
     exit(255);
   }
 #else
