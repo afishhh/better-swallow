@@ -4,16 +4,17 @@
 
 #include <cassert>
 #include <cerrno>
-#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <fstream>
 #include <iostream>
 #include <optional>
+#include <poll.h>
 #include <pthread.h>
 #include <spawn.h>
 #include <sys/mman.h>
+#include <sys/poll.h>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
@@ -203,12 +204,19 @@ int main(int argc, char **argv) {
     } else
       sh.arrive_and_wait();
 
+    pollfd fds[1];
+    fds[0] = {.fd = ConnectionNumber(dpy), .events = POLLIN, .revents = 0};
+
     std::unordered_set<Window> child_windows;
     while (true) {
       if (token.stop_requested())
         break;
       else if (XEventsQueued(dpy, QueuedAfterFlush) == 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        int n = poll(fds, 1, 5);
+        if (n < 0 && errno != EINTR) {
+          perror("poll failed");
+          exit(1);
+        }
         continue;
       }
 
