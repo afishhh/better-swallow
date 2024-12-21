@@ -256,7 +256,7 @@ int main(int argc, char **argv) {
 
   pid_t forkret = fork();
   if (forkret < 0) {
-    perror("vfork failed");
+    perror("fork failed");
     exit(1);
   } else if (forkret == 0) {
     close(ConnectionNumber(dpy));
