@@ -12,7 +12,7 @@ diff -up -x dwm -x '*.o' -x compile_commands.json dwm-6.3-orig/config.mk dwm-6.3
  #CFLAGS   = -g -std=c99 -pedantic -Wall -O0 ${INCS} ${CPPFLAGS}
 diff -up -x dwm -x '*.o' -x compile_commands.json dwm-6.3-orig/dwm.c dwm-6.3/dwm.c
 --- dwm-6.3-orig/dwm.c	2024-06-25 01:55:26.771203825 +0200
-+++ dwm-6.3/dwm.c	2024-12-15 01:44:35.963138226 +0100
++++ dwm-6.3/dwm.c	2025-01-16 21:07:02.942737362 +0100
 @@ -40,6 +40,7 @@
  #include <X11/extensions/Xinerama.h>
  #endif /* XINERAMA */
@@ -209,7 +209,7 @@ diff -up -x dwm -x '*.o' -x compile_commands.json dwm-6.3-orig/dwm.c dwm-6.3/dwm
  	XChangeProperty(dpy, root, netatom[NetWMCheck], XA_WINDOW, 32,
  		PropModeReplace, (unsigned char *) &wmcheckwin, 1);
  	/* EWMH support per view */
-@@ -1766,11 +1864,52 @@ unfocus(Client *c, int setfocus)
+@@ -1766,11 +1864,55 @@ unfocus(Client *c, int setfocus)
  }
  
  void
@@ -243,7 +243,10 @@ diff -up -x dwm -x '*.o' -x compile_commands.json dwm-6.3-orig/dwm.c dwm-6.3/dwm
  	XWindowChanges wc;
  
 +	if(c->swallower) {
-+		c->swallower->swallowed = c->next_swallowed;
++		Client **prev = &c->swallower->swallowed;
++		for(; *prev != c; prev = &(*prev)->next_swallowed)
++			;
++		*prev = c->next_swallowed;
 +		c->next_swallowed = NULL;
 +
 +		if(c->swallower->swallowed == NULL) {
@@ -262,7 +265,7 @@ diff -up -x dwm -x '*.o' -x compile_commands.json dwm-6.3-orig/dwm.c dwm-6.3/dwm
  	detach(c);
  	detachstack(c);
  	if (!destroyed) {
-@@ -1783,9 +1922,10 @@ unmanage(Client *c, int destroyed)
+@@ -1783,9 +1925,10 @@ unmanage(Client *c, int destroyed)
  		XSync(dpy, False);
  		XSetErrorHandler(xerror);
  		XUngrabServer(dpy);
